@@ -82,7 +82,7 @@ void updateBullets()
     {
         if (bullets[i].active)
         {
-            bullets[i].y += 0.01f;
+            bullets[i].y += 0.02f;
             if (bullets[i].y > 1.0f)
             {
                 bullets[i].active = 0;
@@ -120,7 +120,7 @@ void updateEnemy()
                     {
                         enemies[j].lives -= 1;
                         bullets[i].active = 0;
-                        enemies[j].hit = 1; // Устанавливаем флаг "попадание"
+                        enemies[j].hit = 1;
                     }
                 }
             }
@@ -162,9 +162,9 @@ void processInput(GLFWwindow *window, float *xOffset)
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, 1);
 
-    if ((glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) && (fabs(*xOffset - 0.01f) <= 0.75f))
+    if ((glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) && (fabs(*xOffset - 0.01f) <= 1.0f - ENEMY_SIZEX))
         *xOffset -= 0.01f;
-    if ((glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) && (fabs(*xOffset + 0.01f) <= 0.75f))
+    if ((glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) && (fabs(*xOffset + 0.01f) <= 1.0f - ENEMY_SIZEX))
         *xOffset += 0.01f;
 }
 
