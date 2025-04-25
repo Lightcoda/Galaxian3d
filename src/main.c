@@ -9,8 +9,10 @@
 
 #define MAX_ENEMIES 20
 
-#define ENEMY_SIZEX 0.10f
-#define ENEMY_SIZEY 0.10f
+#define ENEMY_SIZEX 0.05f
+#define ENEMY_SIZEY 0.05f
+
+#define STARTPLY -0.5f
 
 const char *vertexShaderSource = "#version 330 core\n"
                                  "layout (location = 0) in vec3 aPos;\n"
@@ -26,9 +28,18 @@ const char *vertexShaderSource = "#version 330 core\n"
 const char *fragmentShaderSource = "#version 330 core\n"
                                    "in vec3 colour;\n"
                                    "out vec4 FragColor;\n"
+                                   "uniform vec3 enemyColor;\n"
+                                   "uniform int isHit;\n"
                                    "void main()\n"
                                    "{\n"
-                                   "   FragColor = vec4(colour, 1.0f);\n"
+                                   "   if (isHit == 1)\n"
+                                   "   {\n"
+                                   "       FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n"
+                                   "   }\n"
+                                   "   else\n"
+                                   "   {\n"
+                                   "       FragColor = vec4(colour, 1.0);\n"
+                                   "   }\n"
                                    "}\n\0";
 
 time_t last_timebul = 0;
@@ -47,6 +58,7 @@ typedef struct
     float x, y;
     int lives;
     char active;
+    char hit;
 } Enemy;
 
 Enemy enemies[MAX_ENEMIES];
@@ -57,7 +69,7 @@ void shootBullet(float playerX, float playerY)
         if ((!bullets[i].active) && ((time(NULL) - last_timebul) > 1))
         {
             bullets[i].x = playerX;
-            bullets[i].y = -0.25f;
+            bullets[i].y = STARTPLY + ENEMY_SIZEY;
             bullets[i].active = 1;
             last_timebul = time(NULL);
             break;
@@ -89,7 +101,7 @@ void drawBullets(unsigned int shaderProgram, unsigned int VAO)
         {
             int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
             glUniform3f(offsetLoc, bullets[i].x, bullets[i].y, 0.0f);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
 }
@@ -103,10 +115,12 @@ void updateEnemy()
             {
                 if (bullets[i].active)
                 {
-                    if ((fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX) && (fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY))
+                    if ((fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX) &&
+                        (fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY))
                     {
                         enemies[j].lives -= 1;
                         bullets[i].active = 0;
+                        enemies[j].hit = 1; // Устанавливаем флаг "попадание"
                     }
                 }
             }
@@ -126,9 +140,19 @@ void drawEnemy(unsigned int shaderProgram, unsigned int VAO)
     {
         if (enemies[i].active)
         {
+            // Передаем позицию врага
             int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
             glUniform3f(offsetLoc, enemies[i].x, enemies[i].y, 0.0f);
+
+            // Передаем флаг попадания
+            int isHitLoc = glGetUniformLocation(shaderProgram, "isHit");
+            glUniform1i(isHitLoc, enemies[i].hit);
+
+            // Отрисовываем врага
             glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            // Сбрасываем флаг попадания после отрисовки
+            enemies[i].hit = 0;
         }
     }
 }
@@ -152,7 +176,22 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow *window = glfwCreateWindow(800, 600, "LearnOpenGL", NULL, NULL);
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    if (!monitor)
+    {
+        fprintf(stderr, "Failed to get primary monitor\n");
+        glfwTerminate();
+        return -1;
+    }
+    const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+    if (!mode)
+    {
+        fprintf(stderr, "Failed to get video mode\n");
+        glfwTerminate();
+        return -1;
+    }
+
+    GLFWwindow *window = glfwCreateWindow(mode->width, mode->height, "LearnOpenGL", NULL, NULL);
     if (window == NULL)
     {
         printf("Failed to create GLFW window");
@@ -160,6 +199,7 @@ int main()
         return -1;
     }
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
@@ -167,7 +207,7 @@ int main()
         return -1;
     }
 
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, mode->width, mode->height);
 
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
@@ -207,26 +247,29 @@ int main()
     glDeleteShader(fragmentShader);
 
     float vertices_bullet[] = {
-        0.0f, 0.05f, 0.0f, 1.0f, 1.0f, 1.0f,
-        -0.05f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-        0.05f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+        -0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f,
 
+        -0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f,
+        -0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f};
     float vertices_player[] = {
-        -0.25f, -0.75f, 0.0f, 1.0f, 1.0f, 1.0f,
-        0.25f, -0.75f, 0.0f, 1.0f, 1.0f, 1.0f,
-        0.25f, -0.25f, 0.0f, 1.0f, 1.0f, 1.0f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
 
-        -0.25f, -0.75f, 0.0f, 1.0f, 1.0f, 1.0f,
-        0.25f, -0.25f, 0.0f, 1.0f, 1.0f, 1.0f,
-        -0.25f, -0.25f, 0.0f, 1.0f, 1.0f, 1.0f};
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f};
     float vertices_enemy[] = {
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
 
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 1.0f, 1.0f, 1.0f
+        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
+        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f
 
     };
 
@@ -290,11 +333,13 @@ int main()
     enemies[0].y = 0.75f;
     enemies[0].lives = 2;
     enemies[0].active = 1;
+    enemies[0].hit = 0;
 
     enemies[1].x = -0.30f;
     enemies[1].y = 0.75f;
     enemies[1].lives = 2;
     enemies[1].active = 1;
+    enemies[1].hit = 0;
 
     // Основной цикл рендеринга
     while (!glfwWindowShouldClose(window))
@@ -306,7 +351,7 @@ int main()
             shootBullet(xOffset, 0.0f);
         }
         // Очистка экрана
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         updateEnemy();
@@ -315,6 +360,8 @@ int main()
         glUseProgram(shaderProgram);
         int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
         glUniform3f(offsetLoc, xOffset, 0.0f, 0.0f);
+        int ishitloc = glGetUniformLocation(shaderProgram, "isHit");
+        glUniform1i(ishitloc, 0);
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
