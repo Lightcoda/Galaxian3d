@@ -12,7 +12,7 @@
 #define ENEMY_SIZEY 0.05f
 #define ENEMY_SPEED 0.002f
 #define SCREEN_LIMIT_X 0.9f
-#define PLAYER_HITS_TO_DIE 15
+#define PLAYER_HITS_TO_DIE 1
 #define FORMATION_ROWS 3
 #define FORMATION_COLS 9
 #define H_SPACING 0.15f
@@ -306,7 +306,7 @@ void checkDiveCollisions(float playerX)
         {
             float dx = enemies[i].x - playerX;
             float dy = enemies[i].y - STARTPLY;
-            if ((fabsf(dx) <= PLAYER_COLLIDE_RX) && (fabsf(dy) <= PLAYER_COLLIDE_RY))
+            if ((fabsf(dx) <= PLAYER_COLLIDE_RX + ENEMY_SIZEX) && (fabsf(dy) <= PLAYER_COLLIDE_RY + ENEMY_SIZEY))
             {
                 playerHits++;
                 playerIsHit = 1;
@@ -326,8 +326,8 @@ void updatePlayerHits(float px)
     for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
     {
         if (enemyBullets[i].active &&
-            fabs(enemyBullets[i].x - px) <= PLAYER_COLLIDE_RX &&
-            enemyBullets[i].y <= STARTPLY + PLAYER_COLLIDE_RY)
+            (fabs(enemyBullets[i].x - px) <= PLAYER_COLLIDE_RX) &&
+            (fabs(enemyBullets[i].y - STARTPLY) <= PLAYER_COLLIDE_RY))
         {
             playerHits++;
             playerIsHit = 1;
