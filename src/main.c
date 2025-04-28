@@ -6,12 +6,22 @@
 #include <time.h>
 
 #define MAX_BULLETS 10
-
-#define MAX_ENEMIES 20
-
+#define MAX_ENEMIES 30
+#define MAX_ENEMY_BULLETS 5
 #define ENEMY_SIZEX 0.05f
 #define ENEMY_SIZEY 0.05f
-
+#define ENEMY_SPEED 0.002f
+#define SCREEN_LIMIT_X 0.9f
+#define PLAYER_HITS_TO_DIE 15
+#define FORMATION_ROWS 3
+#define FORMATION_COLS 9
+#define H_SPACING 0.15f
+#define V_SPACING 0.2f
+#define DIVE_INTERVAL 7
+#define DIVE_SPEED 0.002f
+#define DIVE_ACCEL 0.00005f
+#define PLAYER_COLLIDE_RX 0.05f
+#define PLAYER_COLLIDE_RY 0.05f
 #define STARTPLY -0.5f
 
 const char *vertexShaderSource = "#version 330 core\n"
@@ -21,61 +31,60 @@ const char *vertexShaderSource = "#version 330 core\n"
                                  "out vec3 colour;\n"
                                  "void main()\n"
                                  "{\n"
-                                 "   gl_Position = vec4(aPos + offset, 1.0);\n"
-                                 "   colour = aColour;\n"
+                                 "    gl_Position = vec4(aPos + offset, 1.0);\n"
+                                 "    colour = aColour;\n"
                                  "}\0";
 
 const char *fragmentShaderSource = "#version 330 core\n"
                                    "in vec3 colour;\n"
                                    "out vec4 FragColor;\n"
-                                   "uniform vec3 enemyColor;\n"
                                    "uniform int isHit;\n"
                                    "void main()\n"
                                    "{\n"
-                                   "   if (isHit == 1)\n"
-                                   "   {\n"
-                                   "       FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n"
-                                   "   }\n"
-                                   "   else\n"
-                                   "   {\n"
-                                   "       FragColor = vec4(colour, 1.0);\n"
-                                   "   }\n"
+                                   "    if (isHit == 1)\n"
+                                   "        FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n"
+                                   "    else\n"
+                                   "        FragColor = vec4(colour, 1.0f);\n"
                                    "}\n\0";
 
-time_t last_timebul = 0;
-time_t now_time = 0;
+time_t last_timebul = 0, last_enemy_shot = 0, lastDiveTime = 0;
+int playerHits = 0, kills = 0, playerIsHit = 0;
+;
 
 typedef struct
 {
     float x, y;
     char active;
 } Bullet;
-
-Bullet bullets[MAX_BULLETS];
-
 typedef struct
 {
-    float x, y;
+    float x, y, speedX, speedY;
     int lives;
-    char active;
-    char hit;
+    char active, diving, hit;
 } Enemy;
 
+Bullet bullets[MAX_BULLETS];
+Bullet enemyBullets[MAX_ENEMY_BULLETS];
 Enemy enemies[MAX_ENEMIES];
-void shootBullet(float playerX, float playerY)
+
+void shootBullet(float px)
 {
-    for (int i = 0; i < MAX_BULLETS; i++)
+    if ((time(NULL) - last_timebul) > 1)
     {
-        if ((!bullets[i].active) && ((time(NULL) - last_timebul) > 1))
+        for (int i = 0; i < MAX_BULLETS; i++)
         {
-            bullets[i].x = playerX;
-            bullets[i].y = STARTPLY + ENEMY_SIZEY;
-            bullets[i].active = 1;
-            last_timebul = time(NULL);
-            break;
+            if (!bullets[i].active)
+            {
+                bullets[i].x = px;
+                bullets[i].y = STARTPLY + ENEMY_SIZEY;
+                bullets[i].active = 1;
+                last_timebul = time(NULL);
+                break;
+            }
         }
     }
 }
+
 void updateBullets()
 {
     for (int i = 0; i < MAX_BULLETS; i++)
@@ -84,27 +93,72 @@ void updateBullets()
         {
             bullets[i].y += 0.02f;
             if (bullets[i].y > 1.0f)
-            {
                 bullets[i].active = 0;
-            }
         }
     }
 }
-void drawBullets(unsigned int shaderProgram, unsigned int VAO)
-{
-    glUseProgram(shaderProgram);
-    glBindVertexArray(VAO);
 
+void drawBullets(unsigned int prog, unsigned int VAO)
+{
+    glUseProgram(prog);
+    glBindVertexArray(VAO);
+    int off = glGetUniformLocation(prog, "offset");
     for (int i = 0; i < MAX_BULLETS; i++)
     {
         if (bullets[i].active)
         {
-            int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
-            glUniform3f(offsetLoc, bullets[i].x, bullets[i].y, 0.0f);
+            glUniform3f(off, bullets[i].x, bullets[i].y, 0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
 }
+
+void shootEnemyBullet(float ex, float ey, float interval)
+{
+    if ((time(NULL) - last_enemy_shot) > interval)
+    {
+        for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+        {
+            if (!enemyBullets[i].active)
+            {
+                enemyBullets[i].x = ex;
+                enemyBullets[i].y = ey;
+                enemyBullets[i].active = 1;
+                last_enemy_shot = time(NULL);
+                break;
+            }
+        }
+    }
+}
+
+void updateEnemyBullets()
+{
+    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+    {
+        if (enemyBullets[i].active)
+        {
+            enemyBullets[i].y -= 0.01f;
+            if (enemyBullets[i].y < -1.0f)
+                enemyBullets[i].active = 0;
+        }
+    }
+}
+
+void drawEnemyBullets(unsigned int prog, unsigned int VAO)
+{
+    glUseProgram(prog);
+    glBindVertexArray(VAO);
+    int off = glGetUniformLocation(prog, "offset");
+    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+    {
+        if (enemyBullets[i].active)
+        {
+            glUniform3f(off, enemyBullets[i].x, enemyBullets[i].y, 0.0f);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+    }
+}
+
 void updateEnemy()
 {
     for (int j = 0; j < MAX_ENEMIES; j++)
@@ -113,260 +167,343 @@ void updateEnemy()
         {
             for (int i = 0; i < MAX_BULLETS; i++)
             {
-                if (bullets[i].active)
+                if (bullets[i].active &&
+                    fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX &&
+                    fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY)
                 {
-                    if ((fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX) &&
-                        (fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY))
+                    enemies[j].lives--;
+                    bullets[i].active = 0;
+                    enemies[j].hit = 1;
+                    if (enemies[j].lives == 0)
                     {
-                        enemies[j].lives -= 1;
-                        bullets[i].active = 0;
-                        enemies[j].hit = 1;
+                        enemies[j].active = 0;
+                        kills++;
                     }
                 }
             }
         }
-        if (!enemies[j].lives)
+    }
+}
+
+void spawnFormation()
+{
+    for (int r = 0; r < FORMATION_ROWS; r++)
+        for (int c = 0; c < FORMATION_COLS; c++)
         {
-            enemies[j].active = 0;
+            int i = r * FORMATION_COLS + c;
+            enemies[i].x = -H_SPACING * (FORMATION_COLS - 1) / 2 + c * H_SPACING;
+            enemies[i].y = 0.8f - r * V_SPACING;
+            enemies[i].speedX = ENEMY_SPEED;
+            enemies[i].speedY = 0.0f;
+            enemies[i].lives = 2;
+            enemies[i].active = 1;
+            enemies[i].diving = 0;
+            enemies[i].hit = 0;
+        }
+}
+
+void updateEnemyMovement(float playerX)
+{
+    for (int j = 0; j < MAX_ENEMIES; j++)
+    {
+        if (enemies[j].active && !enemies[j].diving)
+        {
+            if (enemies[j].x + ENEMY_SIZEX >= SCREEN_LIMIT_X ||
+                enemies[j].x - ENEMY_SIZEX <= -SCREEN_LIMIT_X)
+            {
+                for (int k = 0; k < MAX_ENEMIES; k++)
+                {
+                    if (enemies[k].active && !enemies[k].diving)
+                    {
+                        enemies[k].speedX = -enemies[k].speedX;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < MAX_ENEMIES; i++)
+    {
+        if (!enemies[i].active)
+            continue;
+
+        if (enemies[i].diving)
+        {
+            float dx = playerX - enemies[i].x;
+            float dy = STARTPLY - enemies[i].y;
+            float dist = sqrtf(dx * dx + dy * dy);
+            if (dist > 0.0f)
+            {
+                dx /= dist;
+                dy /= dist;
+                enemies[i].speedX += DIVE_ACCEL * dx;
+                enemies[i].speedY += DIVE_ACCEL * dy;
+            }
+            enemies[i].x += enemies[i].speedX;
+            enemies[i].y += enemies[i].speedY;
+
+            if (enemies[i].y < STARTPLY - 0.5f ||
+                enemies[i].x < -1.0f || enemies[i].x > 1.0f)
+            {
+
+                float deltaX = 0.0f;
+                float repInitX = 0.0f;
+                float repSpeed = ENEMY_SPEED;
+                for (int k = 0; k < MAX_ENEMIES; k++)
+                {
+                    if (enemies[k].active && !enemies[k].diving)
+                    {
+                        int c = k % FORMATION_COLS;
+                        repInitX = -H_SPACING * (FORMATION_COLS - 1) / 2 + c * H_SPACING;
+                        deltaX = enemies[k].x - repInitX;
+                        repSpeed = enemies[k].speedX;
+                        break;
+                    }
+                }
+
+                int r = i / FORMATION_COLS, c = i % FORMATION_COLS;
+                float initX = -H_SPACING * (FORMATION_COLS - 1) / 2 + c * H_SPACING;
+                enemies[i].x = initX + deltaX;
+                enemies[i].y = 0.8f - r * V_SPACING;
+                enemies[i].speedX = repSpeed;
+                enemies[i].speedY = 0.0f;
+                enemies[i].diving = 0;
+            }
+        }
+        else
+        {
+            enemies[i].x += enemies[i].speedX;
         }
     }
 }
-void drawEnemy(unsigned int shaderProgram, unsigned int VAO)
-{
-    glUseProgram(shaderProgram);
-    glBindVertexArray(VAO);
 
+void diveAttack(float px)
+{
+    if ((time(NULL) - lastDiveTime) < DIVE_INTERVAL)
+        return;
+    int start = (FORMATION_ROWS - 1) * FORMATION_COLS, end = start + FORMATION_COLS;
+    int cand[FORMATION_COLS], cnt = 0;
+    for (int i = start; i < end; i++)
+        if (enemies[i].active && !enemies[i].diving)
+            cand[cnt++] = i;
+    if (!cnt)
+        return;
+    int pick = cand[rand() % cnt];
+    float dx = px - enemies[pick].x, dy = STARTPLY - enemies[pick].y;
+    float len = sqrtf(dx * dx + dy * dy);
+    enemies[pick].speedX = DIVE_SPEED * dx / len;
+    enemies[pick].speedY = DIVE_SPEED * dy / len;
+    enemies[pick].diving = 1;
+    lastDiveTime = time(NULL);
+}
+
+void checkDiveCollisions(float playerX)
+{
+    for (int i = 0; i < MAX_ENEMIES; i++)
+    {
+        if (enemies[i].active && enemies[i].diving)
+        {
+            float dx = enemies[i].x - playerX;
+            float dy = enemies[i].y - STARTPLY;
+            if ((fabsf(dx) <= PLAYER_COLLIDE_RX) && (fabsf(dy) <= PLAYER_COLLIDE_RY))
+            {
+                playerHits++;
+                playerIsHit = 1;
+                enemies[i].lives = 0;
+                enemies[i].active = 0;
+                kills++;
+                enemies[i].diving = 0;
+                if (playerHits >= PLAYER_HITS_TO_DIE)
+                    exit(0);
+            }
+        }
+    }
+}
+
+void updatePlayerHits(float px)
+{
+    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+    {
+        if (enemyBullets[i].active &&
+            fabs(enemyBullets[i].x - px) <= PLAYER_COLLIDE_RX &&
+            enemyBullets[i].y <= STARTPLY + PLAYER_COLLIDE_RY)
+        {
+            playerHits++;
+            playerIsHit = 1;
+            enemyBullets[i].active = 0;
+            if (playerHits >= PLAYER_HITS_TO_DIE)
+            {
+                printf("Skill issue get good");
+                exit(0);
+            }
+        }
+    }
+}
+
+void drawEnemy(unsigned int prog, unsigned int VAO)
+{
+    glUseProgram(prog);
+    glBindVertexArray(VAO);
+    int off = glGetUniformLocation(prog, "offset");
+    int hitLoc = glGetUniformLocation(prog, "isHit");
     for (int i = 0; i < MAX_ENEMIES; i++)
     {
         if (enemies[i].active)
         {
-            // Передаем позицию врага
-            int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
-            glUniform3f(offsetLoc, enemies[i].x, enemies[i].y, 0.0f);
-
-            // Передаем флаг попадания
-            int isHitLoc = glGetUniformLocation(shaderProgram, "isHit");
-            glUniform1i(isHitLoc, enemies[i].hit);
-
-            // Отрисовываем врага
+            glUniform3f(off, enemies[i].x, enemies[i].y, 0.0f);
+            glUniform1i(hitLoc, enemies[i].hit);
             glDrawArrays(GL_TRIANGLES, 0, 6);
-
-            // Сбрасываем флаг попадания после отрисовки
             enemies[i].hit = 0;
         }
     }
 }
 
-void processInput(GLFWwindow *window, float *xOffset)
+void processInput(GLFWwindow *w, float *x)
 {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, 1);
-
-    if ((glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) && (fabs(*xOffset - 0.01f) <= 1.0f - ENEMY_SIZEX))
-        *xOffset -= 0.01f;
-    if ((glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) && (fabs(*xOffset + 0.01f) <= 1.0f - ENEMY_SIZEX))
-        *xOffset += 0.01f;
+    if (glfwGetKey(w, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(w, 1);
+    if (glfwGetKey(w, GLFW_KEY_LEFT) == GLFW_PRESS && *x > -SCREEN_LIMIT_X)
+        *x -= 0.01f;
+    if (glfwGetKey(w, GLFW_KEY_RIGHT) == GLFW_PRESS && *x < SCREEN_LIMIT_X)
+        *x += 0.01f;
 }
 
 int main()
 {
-
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-    if (!monitor)
-    {
-        fprintf(stderr, "Failed to get primary monitor\n");
-        glfwTerminate();
-        return -1;
-    }
     const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-    if (!mode)
-    {
-        fprintf(stderr, "Failed to get video mode\n");
-        glfwTerminate();
-        return -1;
-    }
-
     GLFWwindow *window = glfwCreateWindow(mode->width, mode->height, "LearnOpenGL", NULL, NULL);
-    if (window == NULL)
+    if (!window)
     {
-        printf("Failed to create GLFW window");
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
-
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        printf("Failed to initialize GLAD");
         return -1;
-    }
-
     glViewport(0, 0, mode->width, mode->height);
 
-    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
-    int success;
-    char infoLog[512];
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-        printf("ERROR::SHADER::VERTEX::COMPILATION_FAILED\n%s\n", infoLog);
-    }
+    unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &vertexShaderSource, NULL);
+    glCompileShader(vs);
+    unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fs);
+    unsigned int prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
 
-    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-        printf("ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n%s\n", infoLog);
-    }
-
-    unsigned int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-        printf("ERROR::SHADER::PROGRAM::LINKING_FAILED\n%s\n", infoLog);
-    }
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    float vertices_bullet[] = {
-        -0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
-        0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
-        0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f,
-
-        -0.005f, -0.07f, 0.0f, 0.0f, 0.0f, 0.0f,
-        0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f,
-        -0.005f, -0.03f, 0.0f, 0.0f, 0.0f, 0.0f};
-    float vertices_player[] = {
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
-
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0.0f, 0.0f, 0.0f, 0.0f};
-    float vertices_enemy[] = {
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
-
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, 0.0f, 0.0f, 0.0f, 0.0f
-
-    };
+    float vb[] = {
+        -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0,
+        -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0, -0.005f, -0.03f, 0, 0, 0, 0};
+    float vp[] = {
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0};
+    float ve[] = {
+        -ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0};
 
     unsigned int VBO, VAO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
-
     glBindVertexArray(VAO);
-
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices_player), vertices_player, GL_DYNAMIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vp), vp, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    float xOffset = 0.0f;
-
-    unsigned int VBO_bullet, VAO_bullet;
-    glGenVertexArrays(1, &VAO_bullet);
-    glGenBuffers(1, &VBO_bullet);
-
-    glBindVertexArray(VAO_bullet);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO_bullet);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices_bullet), vertices_bullet, GL_DYNAMIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+    unsigned int VBO_b, VAO_b;
+    glGenVertexArrays(1, &VAO_b);
+    glGenBuffers(1, &VBO_b);
+    glBindVertexArray(VAO_b);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO_b);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vb), vb, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    unsigned int VBO_enemy, VAO_enemy;
-    glGenVertexArrays(1, &VAO_enemy);
-    glGenBuffers(1, &VBO_enemy);
-
-    glBindVertexArray(VAO_enemy);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO_enemy);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices_enemy), vertices_enemy, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+    unsigned int VBO_e, VAO_e;
+    glGenVertexArrays(1, &VAO_e);
+    glGenBuffers(1, &VBO_e);
+    glBindVertexArray(VAO_e);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO_e);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(ve), ve, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    enemies[0].x = 0.0f;
-    enemies[0].y = 0.75f;
-    enemies[0].lives = 2;
-    enemies[0].active = 1;
-    enemies[0].hit = 0;
+    srand((unsigned)time(NULL));
+    spawnFormation();
+    lastDiveTime = time(NULL);
 
-    enemies[1].x = -0.30f;
-    enemies[1].y = 0.75f;
-    enemies[1].lives = 2;
-    enemies[1].active = 1;
-    enemies[1].hit = 0;
-
-    // Основной цикл рендеринга
+    float x = 0.0f;
     while (!glfwWindowShouldClose(window))
     {
-        // Обработка ввода
-        processInput(window, &xOffset);
+        processInput(window, &x);
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        {
-            shootBullet(xOffset, 0.0f);
-        }
-        // Очистка экрана
+            shootBullet(x);
         glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         updateEnemy();
         updateBullets();
-        // Использование программы шейдеров
-        glUseProgram(shaderProgram);
-        int offsetLoc = glGetUniformLocation(shaderProgram, "offset");
-        glUniform3f(offsetLoc, xOffset, 0.0f, 0.0f);
-        int ishitloc = glGetUniformLocation(shaderProgram, "isHit");
-        glUniform1i(ishitloc, 0);
+        for (int j = 0; j < MAX_ENEMIES; j++)
+            if (enemies[j].active && rand() % 500 == 0)
+                shootEnemyBullet(enemies[j].x, enemies[j].y, 2);
+        updateEnemyBullets();
+        updateEnemyMovement(x);
+        diveAttack(x);
+        for (int i = 0; i < MAX_ENEMIES; i++)
+            if (enemies[i].active && enemies[i].diving)
+                shootEnemyBullet(enemies[i].x, enemies[i].y, 0.2f);
+        checkDiveCollisions(x);
+        updatePlayerHits(x);
+
+        updateEnemy();
+        updateBullets();
+        drawBullets(prog, VAO_b);
+        drawEnemy(prog, VAO_e);
+        drawEnemyBullets(prog, VAO_b);
+
+        glUseProgram(prog);
+        int off = glGetUniformLocation(prog, "offset");
+        int hitLoc = glGetUniformLocation(prog, "isHit");
+
+        glUniform3f(off, x, 0.0f, 0.0f);
+        glUniform1i(hitLoc, playerIsHit);
+
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        drawBullets(shaderProgram, VAO_bullet);
-        drawEnemy(shaderProgram, VAO_enemy);
+        playerIsHit = 0;
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -374,8 +511,7 @@ int main()
 
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
-    glDeleteProgram(shaderProgram);
-
+    glDeleteProgram(prog);
     glfwTerminate();
     return 0;
 }
