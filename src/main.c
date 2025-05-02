@@ -4,15 +4,17 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
+#include <cglm/cglm.h>
 
 #define MAX_BULLETS 10
 #define MAX_ENEMIES 30
 #define MAX_ENEMY_BULLETS 5
 #define ENEMY_SIZEX 0.05f
 #define ENEMY_SIZEY 0.05f
+#define ENEMY_SIZEZ 0.05f
 #define ENEMY_SPEED 0.002f
 #define SCREEN_LIMIT_X 0.9f
-#define PLAYER_HITS_TO_DIE 1
+#define PLAYER_HITS_TO_DIE 10
 #define FORMATION_ROWS 3
 #define FORMATION_COLS 9
 #define H_SPACING 0.15f
@@ -28,10 +30,13 @@ const char *vertexShaderSource = "#version 330 core\n"
                                  "layout (location = 0) in vec3 aPos;\n"
                                  "layout (location = 1) in vec3 aColour;\n"
                                  "uniform vec3 offset;\n"
+                                 "uniform mat4 model;\n"
+                                 "uniform mat4 view;\n"
+                                 "uniform mat4 projection;\n"
                                  "out vec3 colour;\n"
                                  "void main()\n"
                                  "{\n"
-                                 "    gl_Position = vec4(aPos + offset, 1.0);\n"
+                                 "    gl_Position = projection*view*model*vec4(aPos + offset, 1.0);\n"
                                  "    colour = aColour;\n"
                                  "}\0";
 
@@ -353,7 +358,7 @@ void drawEnemy(unsigned int prog, unsigned int VAO)
         {
             glUniform3f(off, enemies[i].x, enemies[i].y, 0.0f);
             glUniform1i(hitLoc, enemies[i].hit);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
             enemies[i].hit = 0;
         }
     }
@@ -390,6 +395,16 @@ int main()
         return -1;
     glViewport(0, 0, mode->width, mode->height);
 
+    mat4 model, view, projection;
+    glm_mat4_identity(model);
+
+    glm_perspective(glm_rad(45.0f), (float)(mode->width) / (float)(mode->height), 1.0f, 10.0f, projection);
+
+    vec3 eye = {0.0f, -2.0f, 1.0f};   // Позиция камеры
+    vec3 center = {0.0f, 0.0f, 0.0f}; // Точка, на которую смотрит камера
+    vec3 up = {0.0f, 1.0f, 1.0f};     // Вектор "вверх"
+    glm_lookat(eye, center, up, view);
+
     unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vertexShaderSource, NULL);
     glCompileShader(vs);
@@ -406,20 +421,104 @@ int main()
     float vb[] = {
         -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0,
         -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0, -0.005f, -0.03f, 0, 0, 0, 0};
+#define ENEMY_SIZEZ 0.05f
+
     float vp[] = {
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, 0, 0, 0, 0};
+        // Передняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+
+        // Задняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Левая грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Правая грань
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Верхняя грань
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+
+        // Нижняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0};
     float ve[] = {
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, 0, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, 0, 0, 0, 0};
+        // Передняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+
+        // Задняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Левая грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Правая грань
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+
+        // Верхняя грань
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+
+        // Нижняя грань
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0};
 
     unsigned int VBO, VAO;
     glGenVertexArrays(1, &VAO);
@@ -500,8 +599,12 @@ int main()
         glUniform3f(off, x, 0.0f, 0.0f);
         glUniform1i(hitLoc, playerIsHit);
 
+        glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
+
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
 
         playerIsHit = 0;
 
