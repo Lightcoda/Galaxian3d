@@ -6,6 +6,9 @@
 #include <time.h>
 #include <cglm/cglm.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #define MAX_BULLETS 10
 #define MAX_ENEMIES 30
 #define MAX_ENEMY_BULLETS 5
@@ -38,7 +41,7 @@ const char *vertexShaderSource = "#version 330 core\n"
                                  "{\n"
                                  "    gl_Position = projection*view*model*vec4(aPos + offset, 1.0);\n"
                                  "    colour = aColour;\n"
-                                 "}\0";
+                                 "}\n";
 
 const char *fragmentShaderSource = "#version 330 core\n"
                                    "in vec3 colour;\n"
@@ -50,7 +53,37 @@ const char *fragmentShaderSource = "#version 330 core\n"
                                    "        FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n"
                                    "    else\n"
                                    "        FragColor = vec4(colour, 1.0f);\n"
-                                   "}\n\0";
+                                   "}\n";
+
+const char *primvetexshader = "#version 330 core\n"
+                              "layout (location = 0) in vec3 aPos;\n"
+                              "layout (location = 1) in vec2 aTexcoords;\n"
+                              "out vec2 Texcoords;\n"
+                              "void main()\n"
+                              "{\n"
+                              "    gl_Position = vec4(aPos, 1.0);\n"
+                              "    Texcoords = aTexcoords;\n"
+                              "}\n";
+const char *primefragmentshader = "#version 330 core\n"
+                                  "in vec2 Texcoords;\n"
+                                  "out vec4 FragColor;\n"
+                                  "uniform sampler2D texture1;\n"
+                                  "void main()\n"
+                                  "{\n"
+                                  "FragColor = texture(texture1, Texcoords);\n"
+                                  "}\n";
+
+void checkShaderCompileErrors(unsigned int shader)
+{
+    int success;
+    char infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        printf("ERROR::SHADER::COMPILATION_FAILED\n%s\n", infoLog);
+    }
+}
 
 time_t last_timebul = 0, last_enemy_shot = 0, lastDiveTime = 0;
 int playerHits = 0, kills = 0, playerIsHit = 0;
@@ -372,6 +405,38 @@ void processInput(GLFWwindow *w, float *x)
         *x -= 0.01f;
     if (glfwGetKey(w, GLFW_KEY_RIGHT) == GLFW_PRESS && *x < SCREEN_LIMIT_X)
         *x += 0.01f;
+    if (glfwGetKey(w, GLFW_KEY_SPACE) == GLFW_PRESS)
+        shootBullet(*x);
+}
+
+// Функция для загрузки текстуры
+unsigned int loadTexture(const char *path)
+{
+    unsigned int texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    // Установите параметры текстуры
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Загрузите изображение
+    int width, height, nrChannels;
+    unsigned char *data = stbi_load(path, &width, &height, &nrChannels, 0);
+    if (data)
+    {
+        // Создайте текстуру
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else
+    {
+        printf("Failed to load texture\n");
+    }
+    stbi_image_free(data);
+    return texture;
 }
 
 int main()
@@ -418,107 +483,157 @@ int main()
     glDeleteShader(vs);
     glDeleteShader(fs);
 
+    unsigned int pvs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(pvs, 1, &primvetexshader, NULL);
+    glCompileShader(pvs);
+    // checkShaderCompileErrors(pvs);
+    unsigned int pfs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(pfs, 1, &primefragmentshader, NULL);
+    glCompileShader(pfs);
+    // checkShaderCompileErrors(pfs);
+    unsigned int primprog = glCreateProgram();
+    glAttachShader(primprog, pvs);
+    glAttachShader(primprog, pfs);
+    glLinkProgram(primprog);
+    glDeleteShader(pvs);
+    glDeleteShader(pfs);
+
+    float backgroundVertices[] = {
+        // positions        // texture coords
+        1.0f, 1.0f, 0.0f, 1.0f, 1.0f,   // top right
+        1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  // bottom right
+        -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, // bottom left
+        -1.0f, 1.0f, 0.0f, 0.0f, 1.0f   // top left
+    };
+
+    unsigned int indices[] = {
+        0, 1, 3, // Первый треугольник
+        1, 2, 3  // Второй треугольник
+    };
+
+    unsigned int texture = loadTexture("../res/back.png");
+
+    unsigned int VBO_bg, VAO_bg, EBO;
+    glGenVertexArrays(1, &VAO_bg);
+    glGenBuffers(1, &VBO_bg);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO_bg);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO_bg);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(backgroundVertices), backgroundVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
     float vb[] = {
-        -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0,
-        -0.005f, -0.07f, 0, 0, 0, 0, 0.005f, -0.03f, 0, 0, 0, 0, -0.005f, -0.03f, 0, 0, 0, 0};
-#define ENEMY_SIZEZ 0.05f
+        -0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f,
+        -0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f, -0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f};
 
     float vp[] = {
         // Передняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Задняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Левая грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Правая грань
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Верхняя грань
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Нижняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0, 0, 0};
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f};
     float ve[] = {
         // Передняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Задняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Левая грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Правая грань
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Верхняя грань
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
 
         // Нижняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0, 0, 0,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0, 0, 0};
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
+        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f};
 
     unsigned int VBO, VAO;
     glGenVertexArrays(1, &VAO);
@@ -569,8 +684,12 @@ int main()
         processInput(window, &x);
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
             shootBullet(x);
-        glClearColor(0.0f, 0.3f, 0.3f, 1.0f);
+
         glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(primprog);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glBindVertexArray(VAO_bg);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
         updateEnemy();
         updateBullets();
