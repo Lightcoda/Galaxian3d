@@ -2,12 +2,15 @@
 #include <GLFW/glfw3.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <math.h>
 #include <time.h>
+#include <math.h>
+
 #include <cglm/cglm.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#define BULLETTIME 0.30
 
 #define MAX_BULLETS 10
 #define MAX_ENEMIES 30
@@ -85,7 +88,7 @@ void checkShaderCompileErrors(unsigned int shader)
     }
 }
 
-time_t last_timebul = 0, last_enemy_shot = 0, lastDiveTime = 0;
+float last_timebul = 0, last_enemy_shot = 0, lastDiveTime = 0;
 int playerHits = 0, kills = 0, playerIsHit = 0;
 ;
 
@@ -107,7 +110,7 @@ Enemy enemies[MAX_ENEMIES];
 
 void shootBullet(float px)
 {
-    if ((time(NULL) - last_timebul) > 1)
+    if ((glfwGetTime() - last_timebul) > 0.65)
     {
         for (int i = 0; i < MAX_BULLETS; i++)
         {
@@ -116,7 +119,7 @@ void shootBullet(float px)
                 bullets[i].x = px;
                 bullets[i].y = STARTPLY + ENEMY_SIZEY;
                 bullets[i].active = 1;
-                last_timebul = time(NULL);
+                last_timebul = glfwGetTime();
                 break;
             }
         }
@@ -153,7 +156,7 @@ void drawBullets(unsigned int prog, unsigned int VAO)
 
 void shootEnemyBullet(float ex, float ey, float interval)
 {
-    if ((time(NULL) - last_enemy_shot) > interval)
+    if ((glfwGetTime() - last_enemy_shot) > interval)
     {
         for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
         {
@@ -162,7 +165,7 @@ void shootEnemyBullet(float ex, float ey, float interval)
                 enemyBullets[i].x = ex;
                 enemyBullets[i].y = ey;
                 enemyBullets[i].active = 1;
-                last_enemy_shot = time(NULL);
+                last_enemy_shot = glfwGetTime();
                 break;
             }
         }
@@ -318,7 +321,7 @@ void updateEnemyMovement(float playerX)
 
 void diveAttack(float px)
 {
-    if ((time(NULL) - lastDiveTime) < DIVE_INTERVAL)
+    if ((glfwGetTime() - lastDiveTime) < DIVE_INTERVAL)
         return;
     int start = (FORMATION_ROWS - 1) * FORMATION_COLS, end = start + FORMATION_COLS;
     int cand[FORMATION_COLS], cnt = 0;
@@ -333,7 +336,7 @@ void diveAttack(float px)
     enemies[pick].speedX = DIVE_SPEED * dx / len;
     enemies[pick].speedY = DIVE_SPEED * dy / len;
     enemies[pick].diving = 1;
-    lastDiveTime = time(NULL);
+    lastDiveTime = glfwGetTime();
 }
 
 void checkDiveCollisions(float playerX)
@@ -676,7 +679,7 @@ int main()
 
     srand((unsigned)time(NULL));
     spawnFormation();
-    lastDiveTime = time(NULL);
+    lastDiveTime = glfwGetTime();
 
     float x = 0.0f;
     while (!glfwWindowShouldClose(window))
