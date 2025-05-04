@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
-
 #include <cglm/cglm.h>
+#include <string.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -16,7 +16,7 @@
 #define MAX_ENEMIES 30
 #define MAX_ENEMY_BULLETS 5
 #define ENEMY_SIZEX 0.05f
-#define ENEMY_SIZEY 0.05f
+#define ENEMY_SIZEY 0.1f
 #define ENEMY_SIZEZ 0.05f
 #define ENEMY_SPEED 0.002f
 #define SCREEN_LIMIT_X 0.9f
@@ -30,7 +30,7 @@
 #define DIVE_ACCEL 0.00005f
 #define PLAYER_COLLIDE_RX 0.05f
 #define PLAYER_COLLIDE_RY 0.05f
-#define STARTPLY -0.5f
+#define STARTPLY -0.4f
 
 const char *vertexShaderSource = "#version 330 core\n"
                                  "layout (location = 0) in vec3 aPos;\n"
@@ -75,22 +75,63 @@ const char *primefragmentshader = "#version 330 core\n"
                                   "{\n"
                                   "FragColor = texture(texture1, Texcoords);\n"
                                   "}\n";
+const char *modelvertexShaderSource = "#version 330 core\n"
+                                 "layout (location = 0) in vec3 aPos;\n"
+                                 "layout (location = 1) in vec2 aTexCoords;\n"
+                                 "layout (location = 2) in vec3 aNormal;\n"
+                                 "uniform vec3 offset;\n"
+                                 "uniform mat4 model;\n"
+                                 "uniform mat4 view;\n"
+                                 "uniform mat4 projection;\n"
+                                 "out vec2 TexCoords;\n"
+                                 "out vec3 Normal;\n"
+                                 "out vec3 FragPos;\n"
+                                 "void main()\n"
+                                 "{\n"
+                                 "FragPos = vec3(model * vec4(aPos + offset, 1.0));\n"
+                                 "Normal = mat3(transpose(inverse(model))) * aNormal;\n"
+                                 "TexCoords = aTexCoords;\n"
+                                 "gl_Position = projection * view * vec4(FragPos, 1.0);\n"
+                                 "}\n";
 
-void checkShaderCompileErrors(unsigned int shader)
-{
-    int success;
-    char infoLog[512];
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(shader, 512, NULL, infoLog);
-        printf("ERROR::SHADER::COMPILATION_FAILED\n%s\n", infoLog);
-    }
-}
+const char *modelfragmentShaderSource = "#version 330 core\n"
+                                   "in vec2 TexCoords;\n"
+                                   "in vec3 Normal;\n"
+                                   "in vec3 FragPos;\n"
+                                   "out vec4 FragColor;\n"
+                                   "uniform int isHit;\n"
+                                   "uniform sampler2D texture1;\n"
+                                   "void main()\n"
+                                   "{\n"
+                                   "    if (isHit == 1)\n"
+                                   "        FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n"
+                                   "    else\n"
+                                   "        FragColor = texture(texture1, TexCoords);\n"
+                                   "}\n";
+
 
 float last_timebul = 0, last_enemy_shot = 0, lastDiveTime = 0;
 int playerHits = 0, kills = 0, playerIsHit = 0;
-;
+
+
+typedef struct {
+    unsigned int vertexIndex;
+    unsigned int uvIndex;
+    unsigned int normalIndex;
+} Face;
+
+typedef struct {
+    vec3* vertices;
+    vec2* texCoords;
+    vec3* normals;
+    Face* faces;
+
+    unsigned int numVertices;
+    unsigned int numTexCoords;
+    unsigned int numNormals;
+    unsigned int numFaces;
+} Model;
+
 
 typedef struct
 {
@@ -108,6 +149,17 @@ Bullet bullets[MAX_BULLETS];
 Bullet enemyBullets[MAX_ENEMY_BULLETS];
 Enemy enemies[MAX_ENEMIES];
 
+void checkShaderCompileErrors(unsigned int shader)
+{
+    int success;
+    char infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        printf("ERROR::SHADER::COMPILATION_FAILED\n%s\n", infoLog);
+    }
+}
 void shootBullet(float px)
 {
     if ((glfwGetTime() - last_timebul) > 0.65)
@@ -382,7 +434,7 @@ void updatePlayerHits(float px)
     }
 }
 
-void drawEnemy(unsigned int prog, unsigned int VAO)
+void drawEnemy(unsigned int prog, unsigned int VAO, Model* enemymodel, unsigned int texture)
 {
     glUseProgram(prog);
     glBindVertexArray(VAO);
@@ -394,7 +446,11 @@ void drawEnemy(unsigned int prog, unsigned int VAO)
         {
             glUniform3f(off, enemies[i].x, enemies[i].y, 0.0f);
             glUniform1i(hitLoc, enemies[i].hit);
-            glDrawArrays(GL_TRIANGLES, 0, 36);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glUniform1i(glGetUniformLocation(prog, "texture1"), 0);
+            glBindVertexArray(VAO);
+            glDrawArrays(GL_TRIANGLES, 0, enemymodel->numFaces);
             enemies[i].hit = 0;
         }
     }
@@ -442,6 +498,152 @@ unsigned int loadTexture(const char *path)
     return texture;
 }
 
+void loadObj(const char* path, Model* obmodel, float scale, float zoffset, float ydir, float yoffset, int change) {
+    FILE* file = fopen(path, "r");
+    if (!file) {
+        printf("Failed to open OBJ file: %s\n", path);
+        return;
+    }
+
+    // Подготовка временных массивов
+    unsigned int maxVertices = 100000, maxTexCoords = 100000, maxNormals = 100000, maxFaces = 100000;
+    obmodel->vertices = malloc(maxVertices * sizeof(vec3));
+    obmodel->texCoords = malloc(maxTexCoords * sizeof(vec2));
+    obmodel->normals = malloc(maxNormals * sizeof(vec3));
+    obmodel->faces = malloc(maxFaces * sizeof(Face));
+
+    int y = 1;
+    int z = 2;
+    if(change){
+        z=1;
+        y=2;
+    }
+    char line[512];
+    int offset = 0;
+    while (fgets(line, sizeof(line), file)) {
+        char*ind = line;
+        if (strncmp(line, "v ", 2) == 0) {
+            // Вершина
+            sscanf(line, "v %f %f %f", &(obmodel->vertices[obmodel->numVertices])[0],
+                   &(obmodel->vertices[obmodel->numVertices])[y],
+                   &(obmodel->vertices[obmodel->numVertices])[z]);
+
+            // Применяем масштабирование
+            obmodel->vertices[obmodel->numVertices][0] *= scale;
+            obmodel->vertices[obmodel->numVertices][z] *= scale;
+            obmodel->vertices[obmodel->numVertices][y] *= (scale*ydir);
+            obmodel->vertices[obmodel->numVertices][1] += zoffset;
+            obmodel->vertices[obmodel->numVertices][1] += yoffset;
+
+            obmodel->numVertices++;
+        } else if (strncmp(line, "vt ", 3) == 0) {
+            // Текстурная координата
+            sscanf(line, "vt %f %f", &obmodel->texCoords[obmodel->numTexCoords][0],
+                   &obmodel->texCoords[obmodel->numTexCoords][1]);
+            obmodel->numTexCoords++;
+        } else if (strncmp(line, "vn ", 3) == 0) {
+            // Нормаль
+            sscanf(line, "vn %f %f %f", &obmodel->normals[obmodel->numNormals][0],
+                   &obmodel->normals[obmodel->numNormals][1],
+                   &obmodel->normals[obmodel->numNormals][2]);
+            obmodel->numNormals++;
+        } else if (strncmp(line, "f ", 2) == 0) {
+            // Грань
+            unsigned int v[3], vt[3], vn[3];
+            int result = sscanf(ind, "f %u/%u/%u %u/%u/%u %u/%u/%u%n",
+                                &v[0], &vt[0], &vn[0],
+                                &v[1], &vt[1], &vn[1],
+                                &v[2], &vt[2], &vn[2],&offset);
+            ind+=offset;
+            offset = 0;
+            for (int i = 0; i < 3; i++) {
+                obmodel->faces[obmodel->numFaces].vertexIndex = v[i] - 1;
+                obmodel->faces[obmodel->numFaces].uvIndex = vt[i] - 1;
+                obmodel->faces[obmodel->numFaces].normalIndex = vn[i] - 1;
+                obmodel->numFaces++;
+            }
+            while(sscanf(ind, "%u/%u/%u%n", &v[1], &vt[1], &vn[1],&offset) == 3){
+                obmodel->faces[obmodel->numFaces].vertexIndex = v[0] - 1;
+                obmodel->faces[obmodel->numFaces].uvIndex = vt[0] - 1;
+                obmodel->faces[obmodel->numFaces].normalIndex = vn[0] - 1;
+                obmodel->numFaces++;
+                obmodel->faces[obmodel->numFaces].vertexIndex = v[2] - 1;
+                obmodel->faces[obmodel->numFaces].uvIndex = vt[2] - 1;
+                obmodel->faces[obmodel->numFaces].normalIndex = vn[2] - 1;
+                obmodel->numFaces++;
+                obmodel->faces[obmodel->numFaces].vertexIndex = v[1] - 1;
+                obmodel->faces[obmodel->numFaces].uvIndex = vt[1] - 1;
+                obmodel->faces[obmodel->numFaces].normalIndex = vn[1] - 1;
+                obmodel->numFaces++;
+                v[2] = v[1];
+                vt[2] = vt[1];
+                vn[2] = vn[1];
+                ind+=offset;
+                offset = 0;
+            }
+        }
+    }
+
+    fclose(file);
+}
+
+void freeModel(Model* obmodel) {
+    free(obmodel->vertices);
+    free(obmodel->texCoords);
+    free(obmodel->normals);
+    free(obmodel->faces);
+
+    obmodel->numVertices = 0;
+    obmodel->numTexCoords = 0;
+    obmodel->numNormals = 0;
+    obmodel->numFaces = 0;
+}
+
+void setupModelBuffers(Model* model, unsigned int* VAO, unsigned int* VBO) {
+    // Создание VBO и VAO
+    glGenVertexArrays(1, VAO);
+    glGenBuffers(1, VBO);
+
+    glBindVertexArray(*VAO);
+
+    // Подготовка данных вершин
+    float* vertexData = malloc(model->numFaces * 3 * 8 * sizeof(float)); // 8 = 3 (позиция) + 2 (текстура) + 3 (нормаль)
+    unsigned int index = 0;
+    for (unsigned int i = 0; i < model->numFaces; i++) {
+        Face face = model->faces[i];
+
+        // Позиция
+        vertexData[index++] = model->vertices[face.vertexIndex][0];
+        vertexData[index++] = model->vertices[face.vertexIndex][1];
+        vertexData[index++] = model->vertices[face.vertexIndex][2];
+
+        // Текстурные координаты
+        vertexData[index++] = model->texCoords[face.uvIndex][0];
+        vertexData[index++] = model->texCoords[face.uvIndex][1];
+
+        // Нормали
+        vertexData[index++] = model->normals[face.normalIndex][0];
+        vertexData[index++] = model->normals[face.normalIndex][1];
+        vertexData[index++] = model->normals[face.normalIndex][2];
+    }
+
+    // Загрузка данных вершин в VBO
+    glBindBuffer(GL_ARRAY_BUFFER, *VBO);
+    glBufferData(GL_ARRAY_BUFFER, model->numFaces * 3 * 8 * sizeof(float), vertexData, GL_STATIC_DRAW);
+
+    // Настройка атрибутов вершин
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0); // Позиция
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float))); // Текстура
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(5 * sizeof(float))); // Нормаль
+    glEnableVertexAttribArray(2);
+
+    free(vertexData);
+    glBindVertexArray(0);
+}
 int main()
 {
     glfwInit();
@@ -451,7 +653,7 @@ int main()
 
     GLFWmonitor *monitor = glfwGetPrimaryMonitor();
     const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-    GLFWwindow *window = glfwCreateWindow(mode->width, mode->height, "LearnOpenGL", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(mode->width, mode->height, "Galaxian3D", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -466,7 +668,7 @@ int main()
     mat4 model, view, projection;
     glm_mat4_identity(model);
 
-    glm_perspective(glm_rad(45.0f), (float)(mode->width) / (float)(mode->height), 1.0f, 10.0f, projection);
+    glm_perspective(glm_rad(45.0f), (float)(mode->width) / (float)(mode->height), 0.1f, 100.0f, projection);
 
     vec3 eye = {0.0f, -2.0f, 1.0f};   // Позиция камеры
     vec3 center = {0.0f, 0.0f, 0.0f}; // Точка, на которую смотрит камера
@@ -500,6 +702,21 @@ int main()
     glLinkProgram(primprog);
     glDeleteShader(pvs);
     glDeleteShader(pfs);
+
+    unsigned int mvs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(mvs, 1, &modelvertexShaderSource, NULL);
+    glCompileShader(mvs);
+    checkShaderCompileErrors(mvs);
+    unsigned int mfs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(mfs, 1, &modelfragmentShaderSource, NULL);
+    glCompileShader(mfs);
+    checkShaderCompileErrors(mfs);
+    unsigned int mprog = glCreateProgram();
+    glAttachShader(mprog, mvs);
+    glAttachShader(mprog, mfs);
+    glLinkProgram(mprog);
+    glDeleteShader(mvs);
+    glDeleteShader(mfs);
 
     float backgroundVertices[] = {
         // positions        // texture coords
@@ -538,118 +755,8 @@ int main()
     glBindVertexArray(0);
 
     float vb[] = {
-        -0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f,
-        -0.005f, -0.07f, 0, 0.56f, 0.93f, 0.56f, 0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f, -0.005f, -0.03f, 0, 0.56f, 0.93f, 0.56f};
-
-    float vp[] = {
-        // Передняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Задняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Левая грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Правая грань
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Верхняя грань
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Нижняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY + STARTPLY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f};
-    float ve[] = {
-        // Передняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Задняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Левая грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Правая грань
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Верхняя грань
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-
-        // Нижняя грань
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, -ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f,
-        -ENEMY_SIZEX, -ENEMY_SIZEY, ENEMY_SIZEZ, 0.56f, 0.93f, 0.56f};
-
-    unsigned int VBO, VAO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vp), vp, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
+        -0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f,
+        -0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f, -0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f};
 
     unsigned int VBO_b, VAO_b;
     glGenVertexArrays(1, &VAO_b);
@@ -664,18 +771,21 @@ int main()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
+    Model enemymodel;
+    memset(&enemymodel, 0, sizeof(Model));
+    loadObj("../res/fighter.obj", &enemymodel,.05f, 0.2f, 1.0f, -0.3f, 0);
     unsigned int VBO_e, VAO_e;
-    glGenVertexArrays(1, &VAO_e);
-    glGenBuffers(1, &VBO_e);
-    glBindVertexArray(VAO_e);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO_e);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(ve), ve, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
+    setupModelBuffers(&enemymodel,&VAO_e,&VBO_e);
+    unsigned int enemytexture = loadTexture("../res/fighter_texture.jpg");
+
+
+    Model playermodel;
+    memset(&playermodel, 0, sizeof(Model));
+    loadObj("../res/SpaseShip.obj", &playermodel,.05f, -0.2f, 1.0f, -0.3f, 1);
+    unsigned int VBO, VAO;
+    setupModelBuffers(&playermodel,&VAO,&VBO);
+
+    unsigned int shiptexture = loadTexture("../res/Ship_texture.png");
 
     srand((unsigned)time(NULL));
     spawnFormation();
@@ -684,10 +794,7 @@ int main()
     float x = 0.0f;
     while (!glfwWindowShouldClose(window))
     {
-        processInput(window, &x);
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-            shootBullet(x);
-
+        processInput(window,&x);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(primprog);
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -711,22 +818,30 @@ int main()
         updateEnemy();
         updateBullets();
         drawBullets(prog, VAO_b);
-        drawEnemy(prog, VAO_e);
         drawEnemyBullets(prog, VAO_b);
-
-        glUseProgram(prog);
-        int off = glGetUniformLocation(prog, "offset");
-        int hitLoc = glGetUniformLocation(prog, "isHit");
-
-        glUniform3f(off, x, 0.0f, 0.0f);
-        glUniform1i(hitLoc, playerIsHit);
-
         glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
         glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
         glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
 
+        glUseProgram(mprog);
+        int off = glGetUniformLocation(mprog, "offset");
+        int hitLoc = glGetUniformLocation(mprog, "isHit");
+
+        glUniform3f(off, x, 0.0f, 0.0f);
+        glUniform1i(hitLoc, playerIsHit);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, shiptexture);
+        glUniform1i(glGetUniformLocation(mprog, "texture1"), 0);
+
+        glUniformMatrix4fv(glGetUniformLocation(mprog, "model"), 1, GL_FALSE, &model[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(mprog, "view"), 1, GL_FALSE, &view[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(mprog, "projection"), 1, GL_FALSE, &projection[0][0]);
+
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glDrawArrays(GL_TRIANGLES, 0, playermodel.numFaces);
+
+        drawEnemy(mprog, VAO_e, &enemymodel, enemytexture);
 
         playerIsHit = 0;
 
