@@ -10,12 +10,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define BULLETTIME 0.30
+#define BULLETTIME 0.70
 
 #define MAX_BULLETS 10
 #define MAX_ENEMIES 30
 #define MAX_ENEMY_BULLETS 5
-#define ENEMY_SIZEX 0.05f
+#define ENEMY_SIZEX 0.1f
 #define ENEMY_SIZEY 0.1f
 #define ENEMY_SIZEZ 0.05f
 #define ENEMY_SPEED 0.002f
@@ -191,7 +191,7 @@ void updateBullets()
     }
 }
 
-void drawBullets(unsigned int prog, unsigned int VAO)
+void drawBullets(unsigned int prog, unsigned int VAO, mat4 model, mat4 view, mat4 projection)
 {
     glUseProgram(prog);
     glBindVertexArray(VAO);
@@ -201,6 +201,9 @@ void drawBullets(unsigned int prog, unsigned int VAO)
         if (bullets[i].active)
         {
             glUniform3f(off, bullets[i].x, bullets[i].y, 0.0f);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
@@ -237,7 +240,7 @@ void updateEnemyBullets()
     }
 }
 
-void drawEnemyBullets(unsigned int prog, unsigned int VAO)
+void drawEnemyBullets(unsigned int prog, unsigned int VAO, mat4 model, mat4 view, mat4 projection)
 {
     glUseProgram(prog);
     glBindVertexArray(VAO);
@@ -247,6 +250,9 @@ void drawEnemyBullets(unsigned int prog, unsigned int VAO)
         if (enemyBullets[i].active)
         {
             glUniform3f(off, enemyBullets[i].x, enemyBullets[i].y, 0.0f);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
@@ -434,7 +440,7 @@ void updatePlayerHits(float px)
     }
 }
 
-void drawEnemy(unsigned int prog, unsigned int VAO, Model* enemymodel, unsigned int texture)
+void drawEnemy(unsigned int prog, unsigned int VAO, Model* enemymodel, unsigned int texture, mat4 model, mat4 view, mat4 projection)
 {
     glUseProgram(prog);
     glBindVertexArray(VAO);
@@ -449,6 +455,9 @@ void drawEnemy(unsigned int prog, unsigned int VAO, Model* enemymodel, unsigned 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture);
             glUniform1i(glGetUniformLocation(prog, "texture1"), 0);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
             glBindVertexArray(VAO);
             glDrawArrays(GL_TRIANGLES, 0, enemymodel->numFaces);
             enemies[i].hit = 0;
@@ -456,7 +465,7 @@ void drawEnemy(unsigned int prog, unsigned int VAO, Model* enemymodel, unsigned 
     }
 }
 
-void processInput(GLFWwindow *w, float *x)
+void processInput(GLFWwindow *w, float *x) // Обработка ввода
 {
     if (glfwGetKey(w, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(w, 1);
@@ -468,31 +477,28 @@ void processInput(GLFWwindow *w, float *x)
         shootBullet(*x);
 }
 
-// Функция для загрузки текстуры
 unsigned int loadTexture(const char *path)
 {
     unsigned int texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
 
-    // Установите параметры текстуры
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    // Загрузите изображение
     int width, height, nrChannels;
     unsigned char *data = stbi_load(path, &width, &height, &nrChannels, 0);
     if (data)
     {
-        // Создайте текстуру
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
     }
     else
     {
-        printf("Failed to load texture\n");
+        printf("Failed to load texture: %s\n", stbi_failure_reason());
+        return -1;
     }
     stbi_image_free(data);
     return texture;
@@ -505,7 +511,6 @@ void loadObj(const char* path, Model* obmodel, float scale, float zoffset, float
         return;
     }
 
-    // Подготовка временных массивов
     unsigned int maxVertices = 100000, maxTexCoords = 100000, maxNormals = 100000, maxFaces = 100000;
     obmodel->vertices = malloc(maxVertices * sizeof(vec3));
     obmodel->texCoords = malloc(maxTexCoords * sizeof(vec2));
@@ -514,7 +519,7 @@ void loadObj(const char* path, Model* obmodel, float scale, float zoffset, float
 
     int y = 1;
     int z = 2;
-    if(change){
+    if(change){ // Если перепутаны y и z
         z=1;
         y=2;
     }
@@ -523,13 +528,11 @@ void loadObj(const char* path, Model* obmodel, float scale, float zoffset, float
     while (fgets(line, sizeof(line), file)) {
         char*ind = line;
         if (strncmp(line, "v ", 2) == 0) {
-            // Вершина
             sscanf(line, "v %f %f %f", &(obmodel->vertices[obmodel->numVertices])[0],
                    &(obmodel->vertices[obmodel->numVertices])[y],
                    &(obmodel->vertices[obmodel->numVertices])[z]);
 
-            // Применяем масштабирование
-            obmodel->vertices[obmodel->numVertices][0] *= scale;
+            obmodel->vertices[obmodel->numVertices][0] *= scale; // Смещения и масштаб
             obmodel->vertices[obmodel->numVertices][z] *= scale;
             obmodel->vertices[obmodel->numVertices][y] *= (scale*ydir);
             obmodel->vertices[obmodel->numVertices][1] += zoffset;
@@ -556,7 +559,7 @@ void loadObj(const char* path, Model* obmodel, float scale, float zoffset, float
                                 &v[2], &vt[2], &vn[2],&offset);
             ind+=offset;
             offset = 0;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 3; i++) { // Сборка полигонов (если после 3 вершин есть что то еще, создается несколько треугольников)
                 obmodel->faces[obmodel->numFaces].vertexIndex = v[i] - 1;
                 obmodel->faces[obmodel->numFaces].uvIndex = vt[i] - 1;
                 obmodel->faces[obmodel->numFaces].normalIndex = vn[i] - 1;
@@ -600,13 +603,10 @@ void freeModel(Model* obmodel) {
 }
 
 void setupModelBuffers(Model* model, unsigned int* VAO, unsigned int* VBO) {
-    // Создание VBO и VAO
     glGenVertexArrays(1, VAO);
     glGenBuffers(1, VBO);
-
     glBindVertexArray(*VAO);
 
-    // Подготовка данных вершин
     float* vertexData = malloc(model->numFaces * 3 * 8 * sizeof(float)); // 8 = 3 (позиция) + 2 (текстура) + 3 (нормаль)
     unsigned int index = 0;
     for (unsigned int i = 0; i < model->numFaces; i++) {
@@ -629,16 +629,12 @@ void setupModelBuffers(Model* model, unsigned int* VAO, unsigned int* VBO) {
 
     // Загрузка данных вершин в VBO
     glBindBuffer(GL_ARRAY_BUFFER, *VBO);
-    glBufferData(GL_ARRAY_BUFFER, model->numFaces * 3 * 8 * sizeof(float), vertexData, GL_STATIC_DRAW);
-
-    // Настройка атрибутов вершин
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0); // Позиция
+    glBufferData(GL_ARRAY_BUFFER, model->numFaces * 3 * 8 * sizeof(float), vertexData, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0); 
     glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float))); // Текстура
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float))); 
     glEnableVertexAttribArray(1);
-
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(5 * sizeof(float))); // Нормаль
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(5 * sizeof(float)));
     glEnableVertexAttribArray(2);
 
     free(vertexData);
@@ -646,7 +642,7 @@ void setupModelBuffers(Model* model, unsigned int* VAO, unsigned int* VBO) {
 }
 int main()
 {
-    glfwInit();
+    glfwInit(); // Создание контекста opengl
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -665,17 +661,17 @@ int main()
         return -1;
     glViewport(0, 0, mode->width, mode->height);
 
-    mat4 model, view, projection;
+    mat4 model, view, projection; // Блок обработки камеры
     glm_mat4_identity(model);
 
     glm_perspective(glm_rad(45.0f), (float)(mode->width) / (float)(mode->height), 0.1f, 100.0f, projection);
 
-    vec3 eye = {0.0f, -2.0f, 1.0f};   // Позиция камеры
-    vec3 center = {0.0f, 0.0f, 0.0f}; // Точка, на которую смотрит камера
-    vec3 up = {0.0f, 1.0f, 1.0f};     // Вектор "вверх"
+    vec3 eye = {0.0f, -2.0f, 1.0f};   
+    vec3 center = {0.0f, 0.0f, 0.0f}; 
+    vec3 up = {0.0f, 1.0f, 1.0f};     
     glm_lookat(eye, center, up, view);
 
-    unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
+    unsigned int vs = glCreateShader(GL_VERTEX_SHADER); // Блок комплиляции шейдеров
     glShaderSource(vs, 1, &vertexShaderSource, NULL);
     glCompileShader(vs);
     unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
@@ -691,11 +687,11 @@ int main()
     unsigned int pvs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(pvs, 1, &primvetexshader, NULL);
     glCompileShader(pvs);
-    // checkShaderCompileErrors(pvs);
+    checkShaderCompileErrors(pvs);
     unsigned int pfs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(pfs, 1, &primefragmentshader, NULL);
     glCompileShader(pfs);
-    // checkShaderCompileErrors(pfs);
+    checkShaderCompileErrors(pfs);
     unsigned int primprog = glCreateProgram();
     glAttachShader(primprog, pvs);
     glAttachShader(primprog, pfs);
@@ -718,20 +714,19 @@ int main()
     glDeleteShader(mvs);
     glDeleteShader(mfs);
 
-    float backgroundVertices[] = {
-        // positions        // texture coords
-        1.0f, 1.0f, 0.0f, 1.0f, 1.0f,   // top right
-        1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  // bottom right
-        -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, // bottom left
-        -1.0f, 1.0f, 0.0f, 0.0f, 1.0f   // top left
+    float backgroundVertices[] = { // Буфер фона и его обработка
+        1.0f, 1.0f, 0.0f, 1.0f, 1.0f,  
+        1.0f, -1.0f, 0.0f, 1.0f, 0.0f,  
+        -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 
+        -1.0f, 1.0f, 0.0f, 0.0f, 1.0f   
     };
 
     unsigned int indices[] = {
-        0, 1, 3, // Первый треугольник
-        1, 2, 3  // Второй треугольник
+        0, 1, 3, 
+        1, 2, 3  
     };
 
-    unsigned int texture = loadTexture("../res/back.png");
+    unsigned int texture = loadTexture("../res/back.png"); 
 
     unsigned int VBO_bg, VAO_bg, EBO;
     glGenVertexArrays(1, &VAO_bg);
@@ -754,7 +749,7 @@ int main()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    float vb[] = {
+    float vb[] = { // Буффер пули и его обработка
         -0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f,
         -0.005f, -0.07f, 0, 1.0f, 0.65f, 0.0f, 0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f, -0.005f, -0.03f, 0, 1.0f, 0.65f, 0.0f};
 
@@ -771,7 +766,7 @@ int main()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    Model enemymodel;
+    Model enemymodel; // Загрузка модели врага
     memset(&enemymodel, 0, sizeof(Model));
     loadObj("../res/fighter.obj", &enemymodel,.05f, 0.2f, 1.0f, -0.3f, 0);
     unsigned int VBO_e, VAO_e;
@@ -779,7 +774,7 @@ int main()
     unsigned int enemytexture = loadTexture("../res/fighter_texture.jpg");
 
 
-    Model playermodel;
+    Model playermodel; //Загрузка модели игрока
     memset(&playermodel, 0, sizeof(Model));
     loadObj("../res/SpaseShip.obj", &playermodel,.05f, -0.2f, 1.0f, -0.3f, 1);
     unsigned int VBO, VAO;
@@ -795,13 +790,13 @@ int main()
     while (!glfwWindowShouldClose(window))
     {
         processInput(window,&x);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT); // Фон
         glUseProgram(primprog);
         glBindTexture(GL_TEXTURE_2D, texture);
         glBindVertexArray(VAO_bg);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
-        updateEnemy();
+        updateEnemy(); // Юлок обработки врагов и пуль
         updateBullets();
         for (int j = 0; j < MAX_ENEMIES; j++)
             if (enemies[j].active && rand() % 500 == 0)
@@ -815,15 +810,10 @@ int main()
         checkDiveCollisions(x);
         updatePlayerHits(x);
 
-        updateEnemy();
-        updateBullets();
-        drawBullets(prog, VAO_b);
-        drawEnemyBullets(prog, VAO_b);
-        glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
+        drawBullets(prog, VAO_b, model, view, projection);
+        drawEnemyBullets(prog, VAO_b,model, view, projection);
 
-        glUseProgram(mprog);
+        glUseProgram(mprog); //Блок обработки игрока
         int off = glGetUniformLocation(mprog, "offset");
         int hitLoc = glGetUniformLocation(mprog, "isHit");
 
@@ -841,7 +831,7 @@ int main()
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLES, 0, playermodel.numFaces);
 
-        drawEnemy(mprog, VAO_e, &enemymodel, enemytexture);
+        drawEnemy(mprog, VAO_e, &enemymodel, enemytexture,model, view, projection);
 
         playerIsHit = 0;
 
@@ -852,6 +842,16 @@ int main()
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
     glDeleteProgram(prog);
+    glDeleteVertexArrays(1, &VAO_e);
+    glDeleteBuffers(1, &VBO_e);
+    glDeleteProgram(mprog);
+    glDeleteVertexArrays(1, &VAO_bg);
+    glDeleteBuffers(1, &VBO_bg);
+    glDeleteProgram(primprog);
+    glDeleteVertexArrays(1, &VAO_b);
+    glDeleteBuffers(1, &VBO_b);
+    freeModel(&playermodel);
+    freeModel(&enemymodel);
     glfwTerminate();
     return 0;
 }
