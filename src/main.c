@@ -11,10 +11,10 @@
 #include "stb_image.h"
 
 #define BULLETTIME 0.70
-
-#define MAX_BULLETS 10
+#define BULLETSPEED 0.01f
+#define MAX_BULLETS 100
 #define MAX_ENEMIES 30
-#define MAX_ENEMY_BULLETS 5
+
 #define ENEMY_SIZEX 0.1f
 #define ENEMY_SIZEY 0.1f
 #define ENEMY_SIZEZ 0.05f
@@ -137,6 +137,7 @@ typedef struct
 {
     float x, y;
     char active;
+    char dir;
 } Bullet;
 typedef struct
 {
@@ -146,7 +147,6 @@ typedef struct
 } Enemy;
 
 Bullet bullets[MAX_BULLETS];
-Bullet enemyBullets[MAX_ENEMY_BULLETS];
 Enemy enemies[MAX_ENEMIES];
 
 void checkShaderCompileErrors(unsigned int shader)
@@ -171,6 +171,7 @@ void shootBullet(float px)
                 bullets[i].x = px;
                 bullets[i].y = STARTPLY + ENEMY_SIZEY;
                 bullets[i].active = 1;
+                bullets[i].dir =1;
                 last_timebul = glfwGetTime();
                 break;
             }
@@ -184,8 +185,8 @@ void updateBullets()
     {
         if (bullets[i].active)
         {
-            bullets[i].y += 0.02f;
-            if (bullets[i].y > 1.0f)
+            bullets[i].y += BULLETSPEED*bullets[i].dir;
+            if (fabsf(bullets[i].y) > 1.0f)
                 bullets[i].active = 0;
         }
     }
@@ -213,47 +214,18 @@ void shootEnemyBullet(float ex, float ey, float interval)
 {
     if ((glfwGetTime() - last_enemy_shot) > interval)
     {
-        for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+        for (int i = 0; i < MAX_BULLETS; i++)
         {
-            if (!enemyBullets[i].active)
+            if (!bullets[i].active)
             {
-                enemyBullets[i].x = ex;
-                enemyBullets[i].y = ey;
-                enemyBullets[i].active = 1;
+                bullets[i].x = ex;
+                bullets[i].y = ey;
+                bullets[i].active = 1;
+                bullets[i].dir = -1;
+
                 last_enemy_shot = glfwGetTime();
                 break;
             }
-        }
-    }
-}
-
-void updateEnemyBullets()
-{
-    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
-    {
-        if (enemyBullets[i].active)
-        {
-            enemyBullets[i].y -= 0.01f;
-            if (enemyBullets[i].y < -1.0f)
-                enemyBullets[i].active = 0;
-        }
-    }
-}
-
-void drawEnemyBullets(unsigned int prog, unsigned int VAO, mat4 model, mat4 view, mat4 projection)
-{
-    glUseProgram(prog);
-    glBindVertexArray(VAO);
-    int off = glGetUniformLocation(prog, "offset");
-    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
-    {
-        if (enemyBullets[i].active)
-        {
-            glUniform3f(off, enemyBullets[i].x, enemyBullets[i].y, 0.0f);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
         }
     }
 }
@@ -267,8 +239,8 @@ void updateEnemy()
             for (int i = 0; i < MAX_BULLETS; i++)
             {
                 if (bullets[i].active &&
-                    fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX &&
-                    fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY)
+                    (fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX) &&
+                    (fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY)&& bullets[i].dir == 1)
                 {
                     enemies[j].lives--;
                     bullets[i].active = 0;
@@ -422,15 +394,15 @@ void checkDiveCollisions(float playerX)
 
 void updatePlayerHits(float px)
 {
-    for (int i = 0; i < MAX_ENEMY_BULLETS; i++)
+    for (int i = 0; i < MAX_BULLETS; i++)
     {
-        if (enemyBullets[i].active &&
-            (fabs(enemyBullets[i].x - px) <= PLAYER_COLLIDE_RX) &&
-            (fabs(enemyBullets[i].y - STARTPLY) <= PLAYER_COLLIDE_RY))
+        if (bullets[i].active &&
+            (fabs(bullets[i].x - px) <= PLAYER_COLLIDE_RX) &&
+            (fabs(bullets[i].y - STARTPLY) <= PLAYER_COLLIDE_RY) && (bullets[i].dir == -1))
         {
             playerHits++;
             playerIsHit = 1;
-            enemyBullets[i].active = 0;
+            bullets[i].active = 0;
             if (playerHits >= PLAYER_HITS_TO_DIE)
             {
                 printf("Skill issue get good");
@@ -801,7 +773,6 @@ int main()
         for (int j = 0; j < MAX_ENEMIES; j++)
             if (enemies[j].active && rand() % 500 == 0)
                 shootEnemyBullet(enemies[j].x, enemies[j].y, 2);
-        updateEnemyBullets();
         updateEnemyMovement(x);
         diveAttack(x);
         for (int i = 0; i < MAX_ENEMIES; i++)
@@ -811,7 +782,6 @@ int main()
         updatePlayerHits(x);
 
         drawBullets(prog, VAO_b, model, view, projection);
-        drawEnemyBullets(prog, VAO_b,model, view, projection);
 
         glUseProgram(mprog); //Блок обработки игрока
         int off = glGetUniformLocation(mprog, "offset");
