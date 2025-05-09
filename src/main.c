@@ -133,11 +133,13 @@ typedef struct {
 } Model;
 
 
-typedef struct
+typedef struct Bullets
 {
     float x, y;
     char active;
     char dir;
+    struct Bullets* next;
+    struct Bullets* prev;
 } Bullet;
 typedef struct
 {
@@ -146,7 +148,8 @@ typedef struct
     char active, diving, hit;
 } Enemy;
 
-Bullet bullets[MAX_BULLETS];
+Bullet* head = NULL;
+Bullet* tail = NULL;
 Enemy enemies[MAX_ENEMIES];
 
 void checkShaderCompileErrors(unsigned int shader)
@@ -160,36 +163,69 @@ void checkShaderCompileErrors(unsigned int shader)
         printf("ERROR::SHADER::COMPILATION_FAILED\n%s\n", infoLog);
     }
 }
+void delete_bullet(Bullet* cur_bullet){
+    if((cur_bullet->next == NULL) && (cur_bullet->prev == NULL)){
+        free(cur_bullet);
+        tail = NULL;
+        head = NULL;
+    }
+    else if(cur_bullet->prev == NULL){
+        cur_bullet->next->prev = NULL;
+        head = cur_bullet->next;
+        free(cur_bullet);
+    }
+    else if(cur_bullet->next == NULL){
+        cur_bullet->prev->next = NULL;
+        tail = cur_bullet->prev;
+        free(cur_bullet);
+    }
+    else{
+        cur_bullet->prev->next = cur_bullet->next;
+        cur_bullet->next-> prev = cur_bullet-> prev;
+        free(cur_bullet);
+    }
+}
 void shootBullet(float px)
 {
     if ((glfwGetTime() - last_timebul) > 0.65)
     {
-        for (int i = 0; i < MAX_BULLETS; i++)
-        {
-            if (!bullets[i].active)
-            {
-                bullets[i].x = px;
-                bullets[i].y = STARTPLY + ENEMY_SIZEY;
-                bullets[i].active = 1;
-                bullets[i].dir =1;
-                last_timebul = glfwGetTime();
-                break;
-            }
+        Bullet* new_bullet = calloc(1,sizeof(Bullet));
+        if (!head){
+            head= new_bullet;
+            tail = head;
+            new_bullet->prev= NULL;
         }
+        else{
+            tail->next = new_bullet;
+            new_bullet->prev = tail;
+            tail = new_bullet;
+        }
+        new_bullet->x = px;
+        new_bullet->y = STARTPLY + ENEMY_SIZEY;
+        new_bullet->dir = 1;
+        new_bullet->next = NULL;
+        last_timebul = glfwGetTime();
     }
 }
 
 void updateBullets()
 {
-    for (int i = 0; i < MAX_BULLETS; i++)
-    {
-        if (bullets[i].active)
-        {
-            bullets[i].y += BULLETSPEED*bullets[i].dir;
-            if (fabsf(bullets[i].y) > 1.0f)
-                bullets[i].active = 0;
-        }
+    if(!head){
+        return;
     }
+    Bullet* cur_bullet = head;
+    Bullet * temp = NULL;
+    while(1)
+    {
+        temp = cur_bullet->next;
+            cur_bullet->y += BULLETSPEED*cur_bullet->dir;
+            if (fabsf(cur_bullet->y) > 1.0f)
+                delete_bullet(cur_bullet);
+        if(temp == NULL){
+            break;
+        }
+        cur_bullet = temp;
+    } 
 }
 
 void drawBullets(unsigned int prog, unsigned int VAO, mat4 model, mat4 view, mat4 projection)
@@ -197,53 +233,62 @@ void drawBullets(unsigned int prog, unsigned int VAO, mat4 model, mat4 view, mat
     glUseProgram(prog);
     glBindVertexArray(VAO);
     int off = glGetUniformLocation(prog, "offset");
-    for (int i = 0; i < MAX_BULLETS; i++)
+    Bullet* cur_bullet = head;
+    while(cur_bullet)
     {
-        if (bullets[i].active)
-        {
-            glUniform3f(off, bullets[i].x, bullets[i].y, 0.0f);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
-            glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-        }
+        
+        glUniform3f(off, cur_bullet->x, cur_bullet->y, 0.0f);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "model"), 1, GL_FALSE, &model[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "view"), 1, GL_FALSE, &view[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(prog, "projection"), 1, GL_FALSE, &projection[0][0]);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        cur_bullet = cur_bullet->next;
+        
     }
 }
 
 void shootEnemyBullet(float ex, float ey, float interval)
 {
-    if ((glfwGetTime() - last_enemy_shot) > interval)
+   if ((glfwGetTime() - last_enemy_shot) > interval)
     {
-        for (int i = 0; i < MAX_BULLETS; i++)
-        {
-            if (!bullets[i].active)
-            {
-                bullets[i].x = ex;
-                bullets[i].y = ey;
-                bullets[i].active = 1;
-                bullets[i].dir = -1;
+        Bullet* new_bullet = calloc(1,sizeof(Bullet));
+        if (!head){
+            head= new_bullet;
+            tail = head;
+            new_bullet->prev= NULL;
 
-                last_enemy_shot = glfwGetTime();
-                break;
-            }
         }
+        else{
+            tail->next = new_bullet;
+            new_bullet->prev = tail;
+            tail = new_bullet;
+        }
+        
+        new_bullet->x = ex;
+        new_bullet->y = ey;
+        new_bullet->dir =-1;
+        new_bullet->next = NULL;
+        last_enemy_shot = glfwGetTime();
     }
 }
 
 void updateEnemy()
 {
+    Bullet* cur_bullet = head;
+    Bullet* temp = NULL;
     for (int j = 0; j < MAX_ENEMIES; j++)
     {
+        cur_bullet = head;
         if (enemies[j].active)
         {
-            for (int i = 0; i < MAX_BULLETS; i++)
+            while (cur_bullet!=NULL)
             {
-                if (bullets[i].active &&
-                    (fabs(bullets[i].x - enemies[j].x) <= ENEMY_SIZEX) &&
-                    (fabs(bullets[i].y - enemies[j].y) <= ENEMY_SIZEY)&& bullets[i].dir == 1)
+                temp = cur_bullet->next;
+                if ((fabs(cur_bullet->x - enemies[j].x) <= ENEMY_SIZEX) &&
+                    (fabs(cur_bullet->y - enemies[j].y) <= ENEMY_SIZEY) && (cur_bullet->dir == 1))
                 {
                     enemies[j].lives--;
-                    bullets[i].active = 0;
+                    delete_bullet(cur_bullet);
                     enemies[j].hit = 1;
                     if (enemies[j].lives == 0)
                     {
@@ -251,6 +296,7 @@ void updateEnemy()
                         kills++;
                     }
                 }
+                cur_bullet = temp;
             }
         }
     }
@@ -394,21 +440,24 @@ void checkDiveCollisions(float playerX)
 
 void updatePlayerHits(float px)
 {
-    for (int i = 0; i < MAX_BULLETS; i++)
+    Bullet* cur_bullet = head;
+    Bullet* temp = NULL;
+    while(cur_bullet!=NULL)
     {
-        if (bullets[i].active &&
-            (fabs(bullets[i].x - px) <= PLAYER_COLLIDE_RX) &&
-            (fabs(bullets[i].y - STARTPLY) <= PLAYER_COLLIDE_RY) && (bullets[i].dir == -1))
+        temp =  cur_bullet->next;
+        if ((fabs(cur_bullet->x - px) <= PLAYER_COLLIDE_RX) &&
+            (fabs(cur_bullet->y - STARTPLY) <= PLAYER_COLLIDE_RY) && (cur_bullet->dir == -1))
         {
             playerHits++;
             playerIsHit = 1;
-            bullets[i].active = 0;
+            delete_bullet(cur_bullet);
             if (playerHits >= PLAYER_HITS_TO_DIE)
             {
                 printf("Skill issue get good");
                 exit(0);
             }
         }
+        cur_bullet = temp;
     }
 }
 
@@ -777,7 +826,7 @@ int main()
         diveAttack(x);
         for (int i = 0; i < MAX_ENEMIES; i++)
             if (enemies[i].active && enemies[i].diving)
-                shootEnemyBullet(enemies[i].x, enemies[i].y, 0.2f);
+                shootEnemyBullet(enemies[i].x, enemies[i].y, 0.5);
         checkDiveCollisions(x);
         updatePlayerHits(x);
 
