@@ -136,7 +136,6 @@ typedef struct {
 typedef struct Bullets
 {
     float x, y;
-    char active;
     char dir;
     struct Bullets* next;
     struct Bullets* prev;
